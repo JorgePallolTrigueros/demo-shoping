@@ -1,0 +1,85 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.2.0'
+	id 'io.spring.dependency-management' version '1.1.4'
+	id 'org.openapi.generator' version '7.1.0'
+}
+
+group = 'com.shoppingcart'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	sourceCompatibility = '17'
+}
+
+configurations {
+	compileOnly {
+		extendsFrom annotationProcessor
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-activemq'
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.15.3'
+    testImplementation 'org.projectlombok:lombok:1.18.28'
+    compileOnly 'org.projectlombok:lombok'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	annotationProcessor 'org.projectlombok:lombok'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.1.0'
+	implementation "io.swagger.core.v3:swagger-annotations:2.2.15"
+	implementation group: 'org.openapitools', name: 'jackson-databind-nullable', version: '0.2.6'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+
+// Configuración de OpenAPI Generator
+openApiGenerate {
+	generatorName = "spring" // Utiliza 'spring' para Spring Boot
+	inputSpec = "$projectDir/src/main/resources/api.yml".toString() // Ubicación de tu archivo YAML
+	outputDir = "$projectDir/generated".toString()
+	apiPackage = "com.shoppingcart.api" // Paquete para las clases de API
+	modelPackage = "com.shoppingcart.model" // Paquete para los DTOs
+	configOptions = [
+			dateLibrary: "java8", // O ajusta según tu preferencia
+			interfaceOnly : "true", // Genera solo interfaces, no implementaciones
+			generateModelDocumentation: "false", // Desactivar la generación de documentación de modelos
+			generateModelTests: "false", // Desactivar la generación de pruebas para modelos
+			hideGenerationTimestamp: "true", // Ocultar la marca de tiempo de generación
+			suppressGeneratedDate: "true", // Suprimir la anotación @Generated
+			useBeanValidation: "true", // Deshabilitar anotaciones de validación
+			useTags:  'false',
+			useSpringBoot3: "true"
+			// Otras opciones de configuración...
+	]
+}
+
+tasks.openApiGenerate {
+	doLast {
+		delete (
+				"$projectDir/generated/.openapi-generator",
+				"$projectDir/generated/docs",
+				"$projectDir/generated/.openapi-generator-ignore",
+				"$projectDir/generated/pom.xml",
+				"$projectDir/generated/README.md"
+		)
+	}
+}
+
+sourceSets {
+	main {
+		java {
+			srcDirs "generated/src/main/java"
+		}
+	}
+}
