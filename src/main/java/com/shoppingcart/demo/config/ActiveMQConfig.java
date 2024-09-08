@@ -22,6 +22,8 @@ public class ActiveMQConfig {
     public ConnectionFactory connectionFactory(){
         ActiveMQConnectionFactory activeMQConnectionFactory  = new ActiveMQConnectionFactory();
         activeMQConnectionFactory.setBrokerURL(brokerUrl);
+        activeMQConnectionFactory.setUserName("artemis");
+        activeMQConnectionFactory.setPassword("artemis");
         return  activeMQConnectionFactory;
     }
 
