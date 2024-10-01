@@ -1,4 +1,4 @@
-package com.shoppingcart.demo.service;
+package com.shoppingcart.demo.service.shoppingcart;
 
 import com.shoppingcart.demo.dao.entity.*;
 import com.shoppingcart.demo.dao.repository.InvoiceEntityRepository;
@@ -7,6 +7,7 @@ import com.shoppingcart.demo.exception.ProductNotFoundException;
 import com.shoppingcart.demo.exception.ShoppingCartInvalidProductsException;
 import com.shoppingcart.demo.exception.ShoppingCartNotFoundException;
 
+import com.shoppingcart.demo.service.product.ProductService;
 import com.shoppingcart.model.InvoiceShoppingCart;
 import com.shoppingcart.model.Product;
 import com.shoppingcart.model.ShoppingCartItem;

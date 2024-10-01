@@ -1,7 +1,7 @@
 package com.shoppingcart.demo.controller;
 
 import com.shoppingcart.api.ShoppingCartApi;
-import com.shoppingcart.demo.service.ShoppingCartService;
+import com.shoppingcart.demo.service.shoppingcart.ShoppingCartService;
 import com.shoppingcart.model.InvoiceShoppingCart;
 import com.shoppingcart.model.ShoppingCartItem;
 import com.shoppingcart.model.ShoppingCartItemRequest;

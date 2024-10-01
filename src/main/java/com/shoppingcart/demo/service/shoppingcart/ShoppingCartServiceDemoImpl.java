@@ -1,4 +1,4 @@
-package com.shoppingcart.demo.service;
+package com.shoppingcart.demo.service.shoppingcart;
 
 import com.shoppingcart.demo.exception.DuplicatedProductIdsException;
 import com.shoppingcart.model.*;

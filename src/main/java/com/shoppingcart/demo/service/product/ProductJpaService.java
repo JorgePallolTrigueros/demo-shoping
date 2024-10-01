@@ -1,4 +1,4 @@
-package com.shoppingcart.demo.service;
+package com.shoppingcart.demo.service.product;
 
 import com.shoppingcart.demo.dao.entity.ProductEntity;
 import com.shoppingcart.demo.dao.repository.ProductEntityRepository;
