@@ -30,6 +30,8 @@ public class InvoiceShoppingCart {
 
   private String id;
 
+  private String email;
+
   @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
   private OffsetDateTime datetime;
 
@@ -68,6 +70,26 @@ public class InvoiceShoppingCart {
 
   public void setId(String id) {
     this.id = id;
+  }
+
+  public InvoiceShoppingCart email(String email) {
+    this.email = email;
+    return this;
+  }
+
+  /**
+   * Get email
+   * @return email
+  */
+  
+  @Schema(name = "email", example = "d290f1ee-6c54-4b01-90e6-d701748f0851", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+  @JsonProperty("email")
+  public String getEmail() {
+    return email;
+  }
+
+  public void setEmail(String email) {
+    this.email = email;
   }
 
   public InvoiceShoppingCart datetime(OffsetDateTime datetime) {
@@ -268,6 +290,7 @@ public class InvoiceShoppingCart {
     }
     InvoiceShoppingCart invoiceShoppingCart = (InvoiceShoppingCart) o;
     return Objects.equals(this.id, invoiceShoppingCart.id) &&
+        Objects.equals(this.email, invoiceShoppingCart.email) &&
         Objects.equals(this.datetime, invoiceShoppingCart.datetime) &&
         Objects.equals(this.businessId, invoiceShoppingCart.businessId) &&
         Objects.equals(this.businessName, invoiceShoppingCart.businessName) &&
@@ -281,7 +304,7 @@ public class InvoiceShoppingCart {
 
   @Override
   public int hashCode() {
-    return Objects.hash(id, datetime, businessId, businessName, subtotal, total, totalTax, taxDescription, tax, products);
+    return Objects.hash(id, email, datetime, businessId, businessName, subtotal, total, totalTax, taxDescription, tax, products);
   }
 
   @Override
@@ -289,6 +312,7 @@ public class InvoiceShoppingCart {
     StringBuilder sb = new StringBuilder();
     sb.append("class InvoiceShoppingCart {\n");
     sb.append("    id: ").append(toIndentedString(id)).append("\n");
+    sb.append("    email: ").append(toIndentedString(email)).append("\n");
     sb.append("    datetime: ").append(toIndentedString(datetime)).append("\n");
     sb.append("    businessId: ").append(toIndentedString(businessId)).append("\n");
     sb.append("    businessName: ").append(toIndentedString(businessName)).append("\n");

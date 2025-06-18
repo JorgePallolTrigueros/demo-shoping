@@ -314,6 +314,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
         InvoiceShoppingCart invoiceItem = new InvoiceShoppingCart();
         invoiceItem.setId(invoiceEntity.getId());
+        invoiceItem.setEmail(shoppingCartItemEntity.getId());
         invoiceItem.setBusinessId(invoiceEntity.getBusinessId());
         invoiceItem.setBusinessName(invoiceEntity.getBusinessName());
         invoiceItem.setDatetime(invoiceEntity.getDatetime());
