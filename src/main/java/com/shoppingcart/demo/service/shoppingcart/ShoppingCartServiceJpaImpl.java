@@ -2,6 +2,7 @@ package com.shoppingcart.demo.service.shoppingcart;
 
 import com.shoppingcart.demo.dao.entity.*;
 import com.shoppingcart.demo.dao.repository.InvoiceEntityRepository;
+import com.shoppingcart.demo.dao.repository.ProductShoppingCartRepository;
 import com.shoppingcart.demo.dao.repository.ShoppingCartEntityRepository;
 import com.shoppingcart.demo.exception.ProductNotFoundException;
 import com.shoppingcart.demo.exception.ShoppingCartInvalidProductsException;
@@ -31,13 +32,15 @@ import java.util.concurrent.atomic.AtomicReference;
 @Qualifier("ShoppingCartServiceJpa")
 public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
+    private final ProductShoppingCartRepository productShoppingCartRepository;
     private final ShoppingCartEntityRepository shoppingCartEntityRepository;
     private final ProductService productService;
     private final InvoiceEntityRepository invoiceEntityRepository;
     private final JmsTemplate jmsTemplate;
     private final String destination;
 
-    public ShoppingCartServiceJpaImpl(ShoppingCartEntityRepository shoppingCartEntityRepository, ProductService productService, InvoiceEntityRepository invoiceEntityRepository, JmsTemplate jmsTemplate,@Value("${active-mq.queue}") String destination) {
+    public ShoppingCartServiceJpaImpl(ProductShoppingCartRepository productShoppingCartRepository, ShoppingCartEntityRepository shoppingCartEntityRepository, ProductService productService, InvoiceEntityRepository invoiceEntityRepository, JmsTemplate jmsTemplate, @Value("${active-mq.queue}") String destination) {
+        this.productShoppingCartRepository = productShoppingCartRepository;
         this.shoppingCartEntityRepository = shoppingCartEntityRepository;
         this.productService = productService;
         this.invoiceEntityRepository = invoiceEntityRepository;
@@ -134,6 +137,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         ------------ subtotal:                  7 EUR
          */
 
+        log.info("Guardando carrito de compra para el usuario "+userId+" "+shoppingCartItemRequest.toString());
 
         Optional<ShoppingCartItemEntity> shoppingCartItemResult = shoppingCartEntityRepository.findById(userId);
 
@@ -155,6 +159,14 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         List<ProductShoppingCartEntity> productEntitiesFound = shoppingCartItemRequest
                 .getProducts()
                 .stream()
+                .filter(productRequest -> {
+                    if(productRequest.getQuantity().compareTo(BigDecimal.ZERO)<=0){
+                        log.info("No se puede procesar datos con cantidades inferiores a cero");
+                        return false;
+                    }else{
+                        return true;
+                    }
+                })
                 .map(productRequest -> {
                     final Optional<Product> productResult = productService.findProductById(productRequest.getId());
 
@@ -174,8 +186,11 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                 }).toList();
 
 
-
+        productShoppingCartRepository.deleteAll(shoppingCartItemEntity.getProducts());
         shoppingCartItemEntity.getProducts().clear();
+        shoppingCartEntityRepository.saveAndFlush(shoppingCartItemEntity);
+
+
         shoppingCartItemEntity.getProducts().addAll(productEntitiesFound);
 
         // ahora viene el procesado de los subtotales y devolver la respuesta al usuario de todos los calculos realizados
@@ -343,6 +358,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
         Product product = productResult.get();
 
+        product.setQuantity(productShoppingCartEntity.getQuantity());
         if( Objects.nonNull( product.getPrice()) && Objects.nonNull(product.getQuantity()) ){
             subtotalProduct = product.getPrice().multiply(product.getQuantity());
         }
