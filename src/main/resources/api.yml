@@ -207,6 +207,9 @@ components:
         price:
           type: number
           example: 10
+        originalPrice:
+          type: number
+          example: 10
         subtotal:
           type: number
           example: 10

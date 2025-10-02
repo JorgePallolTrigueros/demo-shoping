@@ -31,11 +31,13 @@ public class ShoppingController implements ShoppingCartApi {
     }
 
 
+    //para administracion
     @Override
     public ResponseEntity<List<ShoppingCartItem>> getAllShoppingCarts() {
         return ResponseEntity.ok(shoppingCartService.getAllShoppingCarts()) ;
     }
 
+    //para el usuario normal
     @Override
     public ResponseEntity<ShoppingCartItem> getShoppingCartByUserId(String userId) {
 

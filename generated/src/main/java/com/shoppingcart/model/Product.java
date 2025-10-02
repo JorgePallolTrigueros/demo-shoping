@@ -40,6 +40,8 @@ public class Product {
 
   private BigDecimal price;
 
+  private BigDecimal originalPrice;
+
   private BigDecimal subtotal;
 
   public Product id(Long id) {
@@ -190,6 +192,26 @@ public class Product {
     this.price = price;
   }
 
+  public Product originalPrice(BigDecimal originalPrice) {
+    this.originalPrice = originalPrice;
+    return this;
+  }
+
+  /**
+   * Get originalPrice
+   * @return originalPrice
+  */
+  @Valid 
+  @Schema(name = "originalPrice", example = "10", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
+  @JsonProperty("originalPrice")
+  public BigDecimal getOriginalPrice() {
+    return originalPrice;
+  }
+
+  public void setOriginalPrice(BigDecimal originalPrice) {
+    this.originalPrice = originalPrice;
+  }
+
   public Product subtotal(BigDecimal subtotal) {
     this.subtotal = subtotal;
     return this;
@@ -226,12 +248,13 @@ public class Product {
         Objects.equals(this.description, product.description) &&
         Objects.equals(this.galleries, product.galleries) &&
         Objects.equals(this.price, product.price) &&
+        Objects.equals(this.originalPrice, product.originalPrice) &&
         Objects.equals(this.subtotal, product.subtotal);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(id, quantity, name, category, description, galleries, price, subtotal);
+    return Objects.hash(id, quantity, name, category, description, galleries, price, originalPrice, subtotal);
   }
 
   @Override
@@ -245,6 +268,7 @@ public class Product {
     sb.append("    description: ").append(toIndentedString(description)).append("\n");
     sb.append("    galleries: ").append(toIndentedString(galleries)).append("\n");
     sb.append("    price: ").append(toIndentedString(price)).append("\n");
+    sb.append("    originalPrice: ").append(toIndentedString(originalPrice)).append("\n");
     sb.append("    subtotal: ").append(toIndentedString(subtotal)).append("\n");
     sb.append("}");
     return sb.toString();

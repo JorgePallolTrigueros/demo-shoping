@@ -4,10 +4,12 @@ import com.shoppingcart.demo.dao.entity.*;
 import com.shoppingcart.demo.dao.repository.InvoiceEntityRepository;
 import com.shoppingcart.demo.dao.repository.ProductShoppingCartRepository;
 import com.shoppingcart.demo.dao.repository.ShoppingCartEntityRepository;
+import com.shoppingcart.demo.dto.CampaignResponseDto;
 import com.shoppingcart.demo.exception.ProductNotFoundException;
 import com.shoppingcart.demo.exception.ShoppingCartInvalidProductsException;
 import com.shoppingcart.demo.exception.ShoppingCartNotFoundException;
 
+import com.shoppingcart.demo.service.campaign.CampaingApiService;
 import com.shoppingcart.demo.service.product.ProductService;
 import com.shoppingcart.model.InvoiceShoppingCart;
 import com.shoppingcart.model.Product;
@@ -16,6 +18,7 @@ import com.shoppingcart.model.ShoppingCartItemRequest;
 import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jms.core.JmsTemplate;
@@ -38,13 +41,16 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
     private final InvoiceEntityRepository invoiceEntityRepository;
     private final JmsTemplate jmsTemplate;
     private final String destination;
+    private final CampaingApiService campaingApiService;
 
-    public ShoppingCartServiceJpaImpl(ProductShoppingCartRepository productShoppingCartRepository, ShoppingCartEntityRepository shoppingCartEntityRepository, ProductService productService, InvoiceEntityRepository invoiceEntityRepository, JmsTemplate jmsTemplate, @Value("${active-mq.queue}") String destination) {
+    public ShoppingCartServiceJpaImpl(ProductShoppingCartRepository productShoppingCartRepository, ShoppingCartEntityRepository shoppingCartEntityRepository, ProductService productService, InvoiceEntityRepository invoiceEntityRepository, JmsTemplate jmsTemplate, CampaingApiService campaingApiService,@Value("${active-mq.queue}") String destination) {
         this.productShoppingCartRepository = productShoppingCartRepository;
         this.shoppingCartEntityRepository = shoppingCartEntityRepository;
         this.productService = productService;
         this.invoiceEntityRepository = invoiceEntityRepository;
         this.jmsTemplate = jmsTemplate;
+
+        this.campaingApiService = campaingApiService;
         this.destination = destination;
     }
 
@@ -56,30 +62,49 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
     @Override
     public List<ShoppingCartItem> getAllShoppingCarts() {
+
         return shoppingCartEntityRepository
                 .findAll()
                 .stream()
-                .map(
-                shoppingCartItemEntity -> {
-                    final var item  = new ShoppingCartItem();
-                    item.setId(shoppingCartItemEntity.getId());
-                    AtomicReference<BigDecimal> subtotal = new AtomicReference<>(BigDecimal.ZERO);
-                    /*
-                    id          - carrito1
-                    subtotal    - 40
-                    productos   -1  Producto1(1,2,3)
-                                -2  Producto2(1,2,3)
-                                -3  Producto3(1,2,3)
+                .map(shoppingCartItemEntity -> {
 
-                     */
-                    List<Product> products =  shoppingCartItemEntity
+                    // Construcción básica del carrito de respuesta
+                    final var item = new ShoppingCartItem();
+                    item.setId(shoppingCartItemEntity.getId());
+
+                    // Subtotal acumulado (mismo patrón que en getShoppingCartByUserId)
+                    final AtomicReference<BigDecimal> subtotal = new AtomicReference<>(BigDecimal.ZERO);
+
+                    // Obtener campañas por usuario (id del carrito == userId)
+                    List<CampaignResponseDto> campaignResponse = new ArrayList<>();
+                    if (StringUtils.isNotEmpty(item.getId())) {
+                        campaignResponse = campaingApiService.getCampaignByUserId(item.getId());
+                        log.info("Aplicando campanias: {} al usuario: {}", campaignResponse.size(), item.getId());
+                    } else {
+                        log.info("No se ha enviado usuario, no se aplican campanias");
+                    }
+
+                    final List<CampaignResponseDto> finalCampaignResponse = campaignResponse;
+
+                    // 1) Convertir entidad -> Product
+                    // 2) Aplicar campañas/descuentos (misma llamada que usas en el método individual)
+                    List<Product> products = shoppingCartItemEntity
                             .getProducts()
                             .stream()
-                            .map(productShoppingCartEntity -> getProductFromEntity(productShoppingCartEntity, subtotal))
+                            .map(this::getProductFromEntity)
+                            .map(productWithoutCampaignApplied ->
+                                    applyCampaignsDiscounts(
+                                            item.getId(),                    // userId
+                                            productWithoutCampaignApplied,   // producto base
+                                            finalCampaignResponse,           // campañas del usuario
+                                            subtotal.get()                   // mismo parámetro que pasas en el método individual
+                                    )
+                            )
                             .toList();
 
-                    item.products(products);
-                    item.subtotal(subtotal.get());
+                    // Setear productos y subtotal
+                    item.setProducts(products);
+                    item.setSubtotal(subtotal.get());
 
                     return item;
                 })
@@ -94,6 +119,14 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
             return Optional.empty();
         }
 
+        List<CampaignResponseDto> campaignResponse = new ArrayList<>();
+        if(StringUtils.isNotEmpty(userId)){
+            campaignResponse = campaingApiService.getCampaignByUserId(userId);
+            log.info("Aplicando campanias: {} al usuario: {}",campaignResponse.size(),userId);
+        }else{
+            log.info("No se ha enviado usuario, no se aplican campanias");
+        }
+
         // existe el dato
         ShoppingCartItemEntity shoppingCartItemEntity = shoppingCartEntityOptional.get();
         ShoppingCartItem response = new ShoppingCartItem();
@@ -102,10 +135,12 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         subtotal.set(BigDecimal.ZERO);
 
         response.setId(shoppingCartItemEntity.getId());
+        List<CampaignResponseDto> finalCampaignResponse = campaignResponse;
         List<Product> productList = shoppingCartItemEntity
                 .getProducts()
                 .stream()
-                .map(productShoppingCartEntity -> getProductFromEntity(productShoppingCartEntity, subtotal))
+                .map(this::getProductFromEntity)
+                .map(productWithoutCampaignApplied -> applyCampaignsDiscounts(userId,productWithoutCampaignApplied, finalCampaignResponse,subtotal.get()))
                 .toList();
 
         response.setProducts(productList);
@@ -203,7 +238,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         response.setProducts(shoppingCartItemEntity
                 .getProducts()
                 .stream()
-                .map(productShoppingCartEntity -> getProductFromEntity(productShoppingCartEntity, subtotal))
+                .map(this::getProductFromEntity)
                 .toList()
         );
         response.setSubtotal(subtotal.get());
@@ -282,7 +317,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                     if(Objects.isNull(productRequest.getQuantity()) || productRequest.getQuantity().compareTo(BigDecimal.ZERO) <= 0){
                         throw new ShoppingCartInvalidProductsException();
                     }
-                    final Product productFound = getProductFromEntity(productRequest,subtotal);
+                    final Product productFound = getProductFromEntity(productRequest);
                     if(productFound.getQuantity().compareTo(productRequest.getQuantity()) < 0){
                         throw new IllegalArgumentException("Insufficient product to process shopping cart, product id: "+productRequest.getId());
                     }
@@ -347,8 +382,8 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         return invoiceItem;
     }
 
-    private Product getProductFromEntity(ProductShoppingCartEntity productShoppingCartEntity, AtomicReference<BigDecimal> subtotal) {
-        BigDecimal subtotalProduct = BigDecimal.ZERO;
+    private Product getProductFromEntity(ProductShoppingCartEntity productShoppingCartEntity) {
+
 
         final Optional<Product> productResult = productService.findProductById(productShoppingCartEntity.getProductId());
 
@@ -357,16 +392,33 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
             throw new ProductNotFoundException("Product not found by id: "+ productShoppingCartEntity.getProductId());
         }
 
-        Product product = productResult.get();
+       return productResult.get();
+    }
 
-        product.setQuantity(productShoppingCartEntity.getQuantity());
-        if( Objects.nonNull( product.getPrice()) && Objects.nonNull(product.getQuantity()) ){
-            subtotalProduct = product.getPrice().multiply(product.getQuantity());
+
+
+    private static Product applyCampaignsDiscounts(String userId, Product product, List<CampaignResponseDto> finalCampaignResponse,BigDecimal subtotal) {
+        if(finalCampaignResponse
+                .stream()
+                .noneMatch(c->c.getProducts().contains(product.getId()))){
+            log.info("No se aplican descuentos para el producto: {}", product.getId());
+            return product;
         }
 
-        product.setSubtotal(subtotalProduct);
+        double totalDiscounts = finalCampaignResponse
+                .stream()
+                .filter(c->c.getProducts().contains(product.getId()))
+                .mapToDouble(CampaignResponseDto::getDiscount).sum();
+        final BigDecimal basePrice = product.getPrice();
+        final BigDecimal discountPrice = basePrice.subtract (basePrice.multiply(BigDecimal.valueOf(totalDiscounts)));
+        log.info("Producto: {} precio original: {} descuentos sumados: {} precio final: {} para usuario: {}", product.getId(),basePrice,totalDiscounts,discountPrice, userId);
+        product.setPrice(discountPrice);
+        product.setOriginalPrice(basePrice);
 
-        subtotal.set( subtotal.get().add( subtotalProduct  ));
+
+        subtotal = subtotal.add(product.getPrice().multiply(product.getQuantity()));
+
+        product.setSubtotal(subtotal);
 
         return product;
     }
