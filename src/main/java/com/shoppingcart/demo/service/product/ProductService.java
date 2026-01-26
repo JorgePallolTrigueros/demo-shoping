@@ -12,4 +12,6 @@ public interface ProductService {
     boolean reduceStockProducts(Map<Long,Integer> productIds);// productd: 1 , quantity: 10 , productId: 2 , quantity: 5 ....
 
 
+    boolean increaseStockProduct(Long productId,Integer quantity);
+
 }

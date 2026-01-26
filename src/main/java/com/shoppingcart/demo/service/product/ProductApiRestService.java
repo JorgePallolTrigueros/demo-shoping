@@ -18,4 +18,9 @@ public class ProductApiRestService implements ProductService{
     public boolean reduceStockProducts(Map<Long, Integer> productIds) {
         return false;
     }
+
+    @Override
+    public boolean increaseStockProduct(Long productId, Integer quantity) {
+        return false;
+    }
 }

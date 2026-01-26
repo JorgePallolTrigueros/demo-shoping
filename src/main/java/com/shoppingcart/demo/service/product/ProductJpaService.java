@@ -8,10 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -66,6 +63,36 @@ public class ProductJpaService implements ProductService {
             return true;
 
         }catch (Exception exception){
+            return false;
+        }
+    }
+
+    @Override
+    public boolean increaseStockProduct(Long productId, Integer quantityProduct) {
+        try {
+
+            final Map<Long,Integer> productIds = new HashMap<>();
+            productIds.put(productId,quantityProduct);
+            log.info("ProductID: {} quantityProduct: {}", productId, quantityProduct);
+            List<ProductEntity> products = productEntityRepository.findAllById(productIds.keySet());
+
+            products.forEach(productEntity -> {
+                final Integer quantity = productIds.get(productEntity.getId());
+
+                // es por que la cantidad no se encontro en el mapa de request
+                if(Objects.isNull(quantity)){
+                    throw new IllegalArgumentException("Quantity not found for product id: "+productEntity.getId());
+                }
+
+                productEntity.setQuantity( productEntity.getQuantity().add(BigDecimal.valueOf(quantity)) );
+            });
+
+            productEntityRepository.saveAll(products);
+
+            return true;
+
+        }catch (Exception exception){
+            exception.printStackTrace();
             return false;
         }
     }
