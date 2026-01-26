@@ -32,7 +32,7 @@ public class ShoppingCartItemEntity {
     @NotNull
     private String id;
 
-    @OneToMany(mappedBy = "shoppingCartEntity",cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "shoppingCartEntity",cascade = CascadeType.ALL,orphanRemoval = true)
     @ToString.Exclude
     private List<ProductShoppingCartEntity> products = new ArrayList<>();
 
