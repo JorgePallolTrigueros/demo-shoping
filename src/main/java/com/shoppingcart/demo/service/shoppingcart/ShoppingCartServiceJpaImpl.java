@@ -11,10 +11,7 @@ import com.shoppingcart.demo.exception.ShoppingCartNotFoundException;
 
 import com.shoppingcart.demo.service.campaign.CampaingApiService;
 import com.shoppingcart.demo.service.product.ProductService;
-import com.shoppingcart.model.InvoiceShoppingCart;
-import com.shoppingcart.model.Product;
-import com.shoppingcart.model.ShoppingCartItem;
-import com.shoppingcart.model.ShoppingCartItemRequest;
+import com.shoppingcart.model.*;
 import jakarta.annotation.PostConstruct;
 import jakarta.transaction.Transactional;
 import lombok.extern.slf4j.Slf4j;
@@ -28,6 +25,8 @@ import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -96,8 +95,8 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                                     applyCampaignsDiscounts(
                                             item.getId(),                    // userId
                                             productWithoutCampaignApplied,   // producto base
-                                            finalCampaignResponse,           // campañas del usuario
-                                            subtotal.get()                   // mismo parámetro que pasas en el método individual
+                                            finalCampaignResponse           // campañas del usuario
+
                                     )
                             )
                             .toList();
@@ -110,140 +109,269 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                 })
                 .toList();
     }
-
     @Override
+    @Transactional // ✅ CRÍTICO: Asegurar que la transacción se complete
     public Optional<ShoppingCartItem> getShoppingCartByUserId(String userId) {
-        Optional<ShoppingCartItemEntity> shoppingCartEntityOptional = shoppingCartEntityRepository.findById(userId);
+        log.info("🔍 Obteniendo carrito para usuario: {}", userId);
 
-        if(shoppingCartEntityOptional.isEmpty()){
+        Optional<ShoppingCartItemEntity> shoppingCartEntityOptional = shoppingCartEntityRepository.findById(userId);
+        if (shoppingCartEntityOptional.isEmpty()) {
+            log.info("❌ No existe carrito para usuario: {}", userId);
             return Optional.empty();
         }
 
-        List<CampaignResponseDto> campaignResponse = new ArrayList<>();
-        if(StringUtils.isNotEmpty(userId)){
-            campaignResponse = campaingApiService.getCampaignByUserId(userId);
-            log.info("Aplicando campanias: {} al usuario: {}",campaignResponse.size(),userId);
-        }else{
-            log.info("No se ha enviado usuario, no se aplican campanias");
-        }
-
-        // existe el dato
         ShoppingCartItemEntity shoppingCartItemEntity = shoppingCartEntityOptional.get();
-        ShoppingCartItem response = new ShoppingCartItem();
 
-        AtomicReference<BigDecimal> subtotal =  new AtomicReference<>();
-        subtotal.set(BigDecimal.ZERO);
+        // ✅ LOGGING: Ver qué hay en el carrito ANTES de filtrar
+        log.info("📦 Productos en carrito ANTES de filtrar: {}", shoppingCartItemEntity.getProducts().size());
+        shoppingCartItemEntity.getProducts().forEach(item -> {
+            log.info("  - Producto ID: {}, Cantidad: {}", item.getProductId(), item.getQuantity());
+        });
 
-        response.setId(shoppingCartItemEntity.getId());
-        List<CampaignResponseDto> finalCampaignResponse = campaignResponse;
-        List<Product> productList = shoppingCartItemEntity
-                .getProducts()
-                .stream()
-                .map(this::getProductFromEntity)
-                .map(productWithoutCampaignApplied -> applyCampaignsDiscounts(userId,productWithoutCampaignApplied, finalCampaignResponse,subtotal.get()))
+        // ✅ PASO 1: Identificar productos inválidos
+        List<ProductShoppingCartEntity> invalidProducts = shoppingCartItemEntity.getProducts().stream()
+                .filter(item -> {
+                    boolean isInvalid = item.getQuantity() == null || item.getQuantity().compareTo(BigDecimal.ZERO) <= 0;
+                    if (isInvalid) {
+                        log.warn("⚠️ Producto INVÁLIDO detectado - ID: {}, Cantidad: {}",
+                                item.getProductId(), item.getQuantity());
+                    }
+                    return isInvalid;
+                })
                 .toList();
 
+        // ✅ PASO 2: Eliminar productos inválidos de la BD
+        if (!invalidProducts.isEmpty()) {
+            log.warn("🗑️ Eliminando {} productos inválidos del carrito de usuario {}",
+                    invalidProducts.size(), userId);
+
+            // IMPORTANTE: Eliminar de la colección en memoria
+            shoppingCartItemEntity.getProducts().removeAll(invalidProducts);
+
+            // IMPORTANTE: Hacer flush para asegurar que se persiste
+            shoppingCartEntityRepository.saveAndFlush(shoppingCartItemEntity);
+
+            log.info("✅ Productos inválidos eliminados y guardados en BD");
+
+            // Verificar después de eliminar
+            log.info("📦 Productos en carrito DESPUÉS de eliminar: {}",
+                    shoppingCartItemEntity.getProducts().size());
+        }
+
+        // ✅ PASO 3: Obtener campañas
+        List<CampaignResponseDto> campaignResponse = new ArrayList<>();
+        if (StringUtils.isNotEmpty(userId)) {
+            campaignResponse = campaingApiService.getCampaignByUserId(userId);
+            log.info("🎯 Aplicando {} campañas al usuario: {}", campaignResponse.size(), userId);
+        }
+
+        // ✅ PASO 4: Procesar productos VÁLIDOS
+        List<CampaignResponseDto> finalCampaignResponse = campaignResponse;
+
+        List<Product> productList = shoppingCartItemEntity.getProducts().stream()
+                // FILTRO 1: Solo productos con cantidad válida (> 0)
+                .filter(item -> {
+                    boolean isValid = item.getQuantity() != null && item.getQuantity().compareTo(BigDecimal.ZERO) > 0;
+                    if (!isValid) {
+                        log.error("❌ ESTO NO DEBERÍA PASAR: Producto {} con cantidad {} todavía en lista",
+                                item.getProductId(), item.getQuantity());
+                    }
+                    return isValid;
+                })
+                // CONVERSIÓN: Obtener datos completos del producto
+                .map(item -> {
+                    log.debug("🔄 Convirtiendo producto ID: {} con cantidad: {}",
+                            item.getProductId(), item.getQuantity());
+                    var result = getProductFromEntity(item);
+
+                    result.setQuantity(item.getQuantity());
+
+                    return result;
+                })
+                // FILTRO 2: Solo productos que existen en BD
+                .filter(product -> {
+                    if (product == null) {
+                        log.warn("⚠️ Producto no encontrado en BD, se omitirá del carrito");
+                        return false;
+                    }
+
+                    // ✅ VALIDACIÓN ADICIONAL: Verificar overflow
+                    if (product.getQuantity() != null && product.getQuantity().compareTo(new BigDecimal(Integer.MAX_VALUE)) > 0) {
+                        log.error("❌ OVERFLOW detectado en producto {}: cantidad = {}",
+                                product.getId(), product.getQuantity());
+                        // Corregir overflow
+                        product.setQuantity(BigDecimal.ONE);
+                    }
+
+                    return true;
+                })
+                // APLICAR CAMPAÑAS
+                .map(productWithoutCampaignApplied -> {
+                    Product result = applyCampaignsDiscounts(userId, productWithoutCampaignApplied, finalCampaignResponse);
+                    log.debug("💰 Producto {} después de campañas - Precio: {}, Subtotal: {}",
+                            result.getId(), result.getPrice(), result.getSubtotal());
+                    return result;
+                })
+                .toList();
+
+        // ✅ PASO 5: Calcular subtotal de forma segura
+        BigDecimal subtotal = productList.stream()
+                .map(Product::getSubtotal)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        log.info("💵 Subtotal calculado: {}", subtotal);
+
+        // ✅ PASO 6: Construir respuesta
+        ShoppingCartItem response = new ShoppingCartItem();
+        response.setId(shoppingCartItemEntity.getId());
         response.setProducts(productList);
-        response.setSubtotal(subtotal.get());
+        response.setSubtotal(subtotal);
+
+        log.info("✅ Carrito usuario {}: {} productos válidos, subtotal: {}",
+                userId, productList.size(), subtotal);
+
         return Optional.of(response);
     }
-
-
     @Override
     @Transactional
-    public ShoppingCartItem saveShoppingCart(String userId, ShoppingCartItemRequest shoppingCartItemRequest) {
+    public ShoppingCartItem saveShoppingCart(String userId, ShoppingCartItemRequest request) {
+        log.info("Sync carrito (replace-all) para usuario: {}", userId);
 
-        /*
-        userId - carrito1
-        shoppingCartRequest:{
-            - products: [
-                    ProductRequest1(id,quantity), -> buscar product entity por id ProductEntity, calcular el subtotal
-                    ProductRequest2(id,quantity),
-                    ProductRequest3(id,quantity),
-              ]
+        // 1) Cargar o crear carrito vacío
+        ShoppingCartItemEntity cart = shoppingCartEntityRepository.findById(userId)
+                .orElseGet(() -> shoppingCartEntityRepository.save(newEmptyCart(userId)));
+
+        // 2) Devolver stock del carrito anterior (solo cantidades válidas > 0)
+        restoreStockFromOldCart(cart);
+
+        // 3) Borrar productos antiguos del carrito (asociaciones)
+        // Si tu mapping tiene orphanRemoval=true, esto es suficiente:
+        cart.getProducts().clear();
+        // Si NO tienes orphanRemoval, usa un repo hijo y descomenta:
+        // productShoppingCartRepository.deleteByShoppingCartId(cart.getId());
+
+        // 4) Normalizar request: merge duplicados + filtrar qty<=0
+        Map<Long, Integer> desired = normalizeRequestedProducts(request);
+
+        // 5) Reservar (restar) stock del nuevo carrito y construir items finales
+        for (Map.Entry<Long, Integer> entry : desired.entrySet()) {
+            Long productId = entry.getKey();
+            int requestedQty = entry.getValue();
+
+            int reservedQty = reserveStockSafely(productId, requestedQty); // tolerante a fallos
+
+            if (reservedQty <= 0) {
+                log.warn("No se pudo reservar stock para productId={}, solicitado={}", productId, requestedQty);
+                continue;
+            }
+
+            ProductShoppingCartEntity item = new ProductShoppingCartEntity();
+            item.setShoppingCartId(cart.getId());
+            item.setProductId(productId);
+            item.setQuantity(BigDecimal.valueOf(reservedQty));
+            cart.getProducts().add(item);
+
+            log.info("Stock productId={}. solicitado={}, reservado={}", productId, requestedQty, reservedQty);
+
+            if (reservedQty != requestedQty) {
+                log.warn("Stock insuficiente productId={}. solicitado={}, reservado={}", productId, requestedQty, reservedQty);
+            }
         }
 
+        // 6) Guardar y responder
+        shoppingCartEntityRepository.saveAndFlush(cart);
+        log.info("Carrito sincronizado. Total productos: {}", cart.getProducts().size());
 
-        ----------------------------------
-        id 1 - zumos melocoton 2 EUR - 2 CANT = 4 EUR
-        id 2 - jamon serrano   3 EUR - 1 CANT = 3 EUR
+        return buildResponse(cart, userId);
+    }
 
+    private ShoppingCartItemEntity newEmptyCart(String userId) {
+        ShoppingCartItemEntity c = new ShoppingCartItemEntity();
+        c.setId(userId);
+        c.setProducts(new ArrayList<>());
+        return c;
+    }
 
-        ------------ subtotal:                  7 EUR
-         */
+    /** Devuelve stock del carrito anterior y limpia cantidades inválidas sin tocar stock */
+    private void restoreStockFromOldCart(ShoppingCartItemEntity cart) {
+        if (cart.getProducts() == null || cart.getProducts().isEmpty()) return;
 
-        log.info("Guardando carrito de compra para el usuario "+userId+" "+shoppingCartItemRequest.toString());
+        for (ProductShoppingCartEntity oldItem : cart.getProducts()) {
+            int oldQty = oldItem.getQuantity() == null ? 0 : oldItem.getQuantity().intValue();
+            Long productId = oldItem.getProductId();
 
-        Optional<ShoppingCartItemEntity> shoppingCartItemResult = shoppingCartEntityRepository.findById(userId);
-
-        ShoppingCartItemEntity shoppingCartItemEntity;
-        if(shoppingCartItemResult.isEmpty()){
-            shoppingCartItemEntity = new ShoppingCartItemEntity();
-            shoppingCartItemEntity.setId(userId);
-            shoppingCartItemEntity.setProducts(new ArrayList<>());
-        }else{
-            shoppingCartItemEntity = shoppingCartItemResult.get();
+            if (oldQty > 0) {
+                productService.increaseStockProduct(productId, oldQty);
+            } else {
+                log.warn("Producto {} tenía qty inválida en carrito anterior ({}). Se ignora para stock.", productId, oldQty);
+            }
         }
+    }
 
+    /** Agrupa IDs duplicados y elimina qty<=0 para no guardar “vacíos” */
+    private Map<Long, Integer> normalizeRequestedProducts(ShoppingCartItemRequest request) {
+        if (request == null || request.getProducts() == null) return Map.of();
 
-        //shoppingCartItem o vacio pero creado o con valores de que se obtuvo de la consulta a la base de datos
+        return request.getProducts().stream()
+                .filter(p -> p != null && p.getId() != null && p.getQuantity() != null)
+                .collect(Collectors.toMap(
+                        ProductRequest::getId,
+                        p -> p.getQuantity().intValue(),
+                        Integer::sum
+                ))
+                .entrySet().stream()
+                .filter(e -> e.getValue() != null && e.getValue() > 0)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+    }
 
+    /**
+     * Resta stock de forma tolerante:
+     * - reserva min(requested, stockDisponible)
+     * - devuelve cuánta cantidad se ha reservado realmente
+     */
+    private int reserveStockSafely(Long productId, int requestedQty) {
+        if (requestedQty <= 0) return 0;
 
-        // se busca los productos que he enviado como request en la base de datos
-        // se guarda unicamente lo necesario en productEntity
-        List<ProductShoppingCartEntity> productEntitiesFound = shoppingCartItemRequest
-                .getProducts()
-                .stream()
-                .filter(productRequest -> {
-                    if(productRequest.getQuantity().compareTo(BigDecimal.ZERO)<=0){
-                        log.info("No se puede procesar datos con cantidades inferiores a cero");
-                        return false;
-                    }else{
-                        return true;
-                    }
+        int stockActual = productService.findProductById(productId)
+                .map(p -> p.getQuantity().intValue())
+                .orElse(0);
+
+        int toReserve = Math.min(requestedQty, Math.max(stockActual, 0));
+        if (toReserve <= 0) return 0;
+
+        productService.reduceStockProducts(Map.of(productId, toReserve));
+        return toReserve;
+    }
+
+    private ShoppingCartItem buildResponse(ShoppingCartItemEntity cart, String userId) {
+        List<CampaignResponseDto> campaigns = StringUtils.isNotEmpty(userId)
+                ? campaingApiService.getCampaignByUserId(userId)
+                : Collections.emptyList();
+
+        AtomicReference<BigDecimal> subtotalTotal = new AtomicReference<>(BigDecimal.ZERO);
+
+        List<Product> productDtos = cart.getProducts().stream()
+                .map(p-> {
+                            var result = getProductFromEntity(p);
+                            result.setQuantity(p.getQuantity());
+                            return result;
+                        }
+                )
+                .map(p -> {
+                    Product discounted = applyCampaignsDiscounts(userId, p, campaigns);
+                    // Asumiendo que el subtotal es (precioConDescuento * cantidad)
+                    BigDecimal itemTotal = discounted.getPrice().multiply(p.getQuantity());
+                    subtotalTotal.set(subtotalTotal.get().add(itemTotal));
+                    log.info("Carrito de compra: {} Stock de product {}, cantidad: {}",userId,p.getId(),p.getQuantity());
+                    return discounted;
                 })
-                .map(productRequest -> {
-                    final Optional<Product> productResult = productService.findProductById(productRequest.getId());
+                .toList();
 
-                    if(productResult.isEmpty()){
-                        throw new ProductNotFoundException("Product not found by id:" + productRequest.getId());
-                    }
-
-                    ProductShoppingCartEntity productShoppingCartEntity = new ProductShoppingCartEntity();
-
-                    Product product = productResult.get();
-
-                    productShoppingCartEntity.setProductId(product.getId());
-                    productShoppingCartEntity.setQuantity(productRequest.getQuantity());
-                    productShoppingCartEntity.setShoppingCartId(shoppingCartItemEntity.getId());
-
-                    return productShoppingCartEntity;
-                }).toList();
-
-
-        productShoppingCartRepository.deleteAll(shoppingCartItemEntity.getProducts());
-        shoppingCartItemEntity.getProducts().clear();
-        shoppingCartEntityRepository.saveAndFlush(shoppingCartItemEntity);
-
-
-        shoppingCartItemEntity.getProducts().addAll(productEntitiesFound);
-
-        // ahora viene el procesado de los subtotales y devolver la respuesta al usuario de todos los calculos realizados
         ShoppingCartItem response = new ShoppingCartItem();
-
-        AtomicReference<BigDecimal> subtotal =  new AtomicReference<>();
-        subtotal.set(BigDecimal.ZERO);
-
         response.setId(userId);
-        response.setProducts(shoppingCartItemEntity
-                .getProducts()
-                .stream()
-                .map(this::getProductFromEntity)
-                .toList()
-        );
-        response.setSubtotal(subtotal.get());
-        shoppingCartEntityRepository.saveAndFlush(shoppingCartItemEntity);
-
+        response.setProducts(productDtos);
+        response.setSubtotal(subtotalTotal.get());
         return response;
     }
 
@@ -255,6 +383,13 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         if (shoppingCartEntityOptional.isPresent()) {
             ShoppingCartItemEntity shoppingCartEntity = shoppingCartEntityOptional.get();
             // Borra el carrito de compra de la base de datos
+            //recorrer todos los productos y devolver la cantidad a producto
+
+            for(var product:shoppingCartEntity.getProducts()){
+                boolean resultIncreaseStock = productService.increaseStockProduct(product.getProductId(),product.getQuantity().intValue());
+                System.out.println("Increase stock: "+product.getQuantity().intValue() + " ProductId: "+product.getProductId() + " Result: "+ resultIncreaseStock);
+            }
+
             shoppingCartEntityRepository.delete(shoppingCartEntity);
             return true;
         } else {
@@ -397,11 +532,18 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
 
 
-    private static Product applyCampaignsDiscounts(String userId, Product product, List<CampaignResponseDto> finalCampaignResponse,BigDecimal subtotal) {
+    private static Product applyCampaignsDiscounts(String userId, Product product, List<CampaignResponseDto> finalCampaignResponse) {
         if(finalCampaignResponse
                 .stream()
                 .noneMatch(c->c.getProducts().contains(product.getId()))){
             log.info("No se aplican descuentos para el producto: {}", product.getId());
+
+            BigDecimal subtotal = product.getPrice().multiply(product.getQuantity());
+
+            product.setOriginalPrice(product.getPrice());
+
+            product.setSubtotal(subtotal);
+
             return product;
         }
 
@@ -416,7 +558,7 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         product.setOriginalPrice(basePrice);
 
 
-        subtotal = subtotal.add(product.getPrice().multiply(product.getQuantity()));
+        BigDecimal subtotal = product.getPrice().multiply(product.getQuantity());
 
         product.setSubtotal(subtotal);
 
