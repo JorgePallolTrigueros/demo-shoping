@@ -473,6 +473,12 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                     invoiceProductEntity.setQuantity(productRequest.getQuantity());
                     invoiceProductEntity.setInvoiceEntity(finalInvoiceEntity);
 
+                    //sumar los subtotales en cada vuelta
+                    // 0   + 60
+                    // 60  + 60
+                    // 120 + 300 -> 420
+                    subtotal.set(subtotal.get().add( invoiceProductEntity.getSubtotal()));
+
                     return invoiceProductEntity;
                 }).toList();
 
@@ -484,11 +490,12 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
 
 
         invoiceEntity.setTotalTax(invoiceEntity.getSubtotal().multiply( invoiceEntity.getTax()));
-        invoiceEntity.setTotal( invoiceEntity.getTotalTax().add(invoiceEntity.getTotalTax()));
+        invoiceEntity.setTotal( invoiceEntity.getSubtotal().add(invoiceEntity.getTotalTax()));
 
 
         invoiceEntity = invoiceEntityRepository.saveAndFlush(invoiceEntity);
 
+        //este se usa para enviar a microservicio de notificacion es una copia de invoice entity
         InvoiceShoppingCart invoiceItem = new InvoiceShoppingCart();
         invoiceItem.setId(invoiceEntity.getId());
         invoiceItem.setEmail(shoppingCartItemEntity.getId());
