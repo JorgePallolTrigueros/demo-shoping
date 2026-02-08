@@ -410,6 +410,8 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
         }
         ShoppingCartItemEntity shoppingCartItemEntity = shoppingCartItemEntityOptional.get();
 
+        List<CampaignResponseDto> campaignResponse = campaingApiService.getCampaignByUserId(userId);
+
 
         /**
          * ----------------------------------------------------
@@ -452,7 +454,12 @@ public class ShoppingCartServiceJpaImpl implements ShoppingCartService{
                     if(Objects.isNull(productRequest.getQuantity()) || productRequest.getQuantity().compareTo(BigDecimal.ZERO) <= 0){
                         throw new ShoppingCartInvalidProductsException();
                     }
-                    final Product productFound = getProductFromEntity(productRequest);
+                    final Product productWithoutCampaign = getProductFromEntity(productRequest);
+
+
+                    Product productFound = applyCampaignsDiscounts(userId, productWithoutCampaign, campaignResponse);
+
+
                     if(productFound.getQuantity().compareTo(productRequest.getQuantity()) < 0){
                         throw new IllegalArgumentException("Insufficient product to process shopping cart, product id: "+productRequest.getId());
                     }
